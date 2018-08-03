@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Chat with Golang</title>
+</head>
+<body>
+    <div id="scr-1" class="scr active">
+        <div class="scr-container">
+            <input type="text" id="input-from" placeholder="Name">
+            <button id="btn-connect">Login</button>
+        </div>
+    </div>
+
+    <div id="scr-2" class="scr">
+        <div class="scr-container">
+            <ul id="list-user">
+        
+            </ul>
+            <div id="chat-area">
+                <div id="message-area"></div>
+                <div id="toolbox">
+                    <input type="text" id="input-msg" placeholder="Your message...">
+                    <button id="btn-send-msg">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws
+        let myClientId, toClientId, list_user = []
+        let btnConnect = document.getElementById("btn-connect")
+        let btnSendMsg = document.getElementById("btn-send-msg")
+        let txtMyId = document.getElementById("input-from")
+        let txtMsg = document.getElementById("input-msg")
+        let messageAreas = []
+        let listUserDOM=document.getElementById("list-user")
+
+        btnConnect.onclick = e=>connect();
+        txtMsg.addEventListener("keyup", e=>{
+            e.preventDefault()
+            if (e.keyCode === 13){
+                sendMessage();
+            }
+        })
+        btnSendMsg.addEventListener("click", sendMessage)
+        function connect(name = txtMyId.value, token="xxx") {
+            if (!name) {
+                return alert("Missing name")
+            }
+
+            ws = new WebSocket('ws://' + window.location.host + '/ws?token=' + token + "&name=" + name);
+            ws.addEventListener('open', e => {
+                showScr("scr-2")
+                getListUser(ws)
+                .then(users=>{
+                    list_user = users.filter(u=>u.id!=myClientId)
+                    updateListUser();
+                })
+                .catch(console.error)
+            })
+            ws.addEventListener('message', e => {
+                let data = JSON.parse(e.data)
+                console.log(data)
+                switch (data.type) {
+                    case 0:
+                        myClientId = data.data
+                        break;
+                    case 1:
+                        if (!messageAreas[data.from.id]) {
+                            createMessageAreaForUser(data.from.id)
+                        }
+
+                        let uItems=document.querySelectorAll("#list-user li")
+                        for (let i = 0; i < uItems.length; i++) {
+                            if(data.from.id !== toClientId && uItems[i].getAttribute("data-uid")===data.from.id)
+                                uItems[i].classList.add("new-msg")
+                        }
+                        messageAreas[data.from.id].innerHTML+="<div class=\"your-msg\">" + data.data + "</div>"
+                        break;
+                    case 3:
+                        onAddNewUser(data.data)
+                        break;
+                    case 4:
+                        onRemoveUser(data.data)
+                        break;
+                }
+            });
+            ws.addEventListener('error', e => {
+                console.log(e);
+                if(ws.readyState === 3){
+                    alert("cant connect")
+                }
+            })
+        }
+
+        function getListUser(ws) {
+            return new Promise((resolve, reject)=>{
+                let handle = e => {
+                    let data = JSON.parse(e.data)
+                    if(data.type == 2){
+                        ws.removeEventListener("message", handle)
+                        let list_user = data.data
+                        resolve(list_user)
+                    }
+                }
+                ws.addEventListener("message", handle)
+
+                ws.addEventListener('error', reject)
+
+                req = JSON.stringify({
+                    type: 2
+                })
+                
+                ws.send(req)
+            })
+        }
+
+        function sendMessage() {
+            if(!ws)
+                return
+            
+            let data = {
+                from: {
+                    id: myClientId
+                },
+                to: {
+                    id: toClientId
+                },
+                data: txtMsg.value,
+                type: 1,//text message
+            }
+
+            data = JSON.stringify(data)
+
+            if (!messageAreas[toClientId]) {
+                createMessageAreaForUser(toClientId)
+            }
+            messageAreas[toClientId].innerHTML += "<div class=\"my-msg\">"+txtMsg.value+"</div>"
+            
+            ws.send(data)
+
+            txtMsg.value = ""
+        }
+
+        function onAddNewUser(user) {
+            if(user.id === myClientId)
+                return
+            list_user = list_user.filter(u=>u.id!=user.id)
+            list_user.push(user)
+            updateListUser()
+        }
+
+        function onRemoveUser(user) {
+            list_user = list_user.filter(u=>u.id!=user.id)
+            if(toClientId === user.id){
+                toClientId = list_user.length > 0 ? list_user[0] : null
+            }
+            updateListUser()
+        }
+
+        function createMessageAreaForUser(user_id) {
+            messageAreas[user_id] = document.createElement("div")
+            messageAreas[user_id].setAttribute("class", "message-container "+user_id)
+            document.getElementById("message-area").appendChild(messageAreas[user_id])
+
+            if(messageAreas.length === 1){
+                messageAreas[user_id].classList.add("selected")
+            }
+        }
+
+        function onSelectUser(liDOM, user) {
+            toClientId = user.id
+
+            // if not have DOM
+            if (!messageAreas[user.id]) {
+                createMessageAreaForUser(user.id)
+            }
+            
+            // class in list user
+            for (let i = 0; i < listUserDOM.children.length; i++) {
+                listUserDOM.children[i].classList.remove("selected")
+            }
+            liDOM.classList.add("selected")
+            liDOM.classList.remove("new-msg")
+
+            // class message container
+            for (const user_id in messageAreas) {
+                if (messageAreas.hasOwnProperty(user_id)) {
+                    messageAreas[user_id].classList.remove("selected")
+                }
+            }
+            messageAreas[user.id].classList.add("selected")
+        }
+
+        function updateListUser() {
+            listUserDOM.innerHTML = ''
+
+            if (list_user.length === 0) {
+                let liDOM = document.createElement("li")
+                liDOM.innerHTML = "No user online"
+                listUserDOM.appendChild(liDOM)
+                return
+            }
+
+            list_user.forEach((user, index) => {
+                let liDOM = document.createElement("li")
+                if((index==0 && !toClientId) || user.id === toClientId ){
+                    onSelectUser(liDOM, user)
+                }
+                liDOM.innerHTML = user.name
+                liDOM.setAttribute("data-uid", user.id)
+                liDOM.onclick = (e)=>{
+                    onSelectUser(e.target, user)
+                }
+                
+                listUserDOM.appendChild(liDOM)
+            });
+        }
+        
+        function showScr(id) {
+            let scrs = document.getElementsByClassName("scr")
+            for (let i = 0; i < scrs.length; i++) {
+                scrs[i].classList.remove("active")
+            }
+            document.getElementById(id).classList.add("active")
+        }
+    </script>
+
+    <style>
+        body {
+            margin: 0
+        }
+        .scr{
+            display: none;
+        }
+        .scr.active{
+            display: block;
+        }
+        #scr-1 .scr-container {
+            display: table-cell;
+            width: 100vw;
+            height: 100vh;
+            vertical-align: middle;
+        }
+        #scr-1 .scr-container > * {
+            display: block;
+            margin: 7px auto;
+        }
+        #scr-1 .scr-container > input {
+            line-height: 24px;
+            padding: 5px;
+        }
+        #scr-1 .scr-container > button {
+            border: none;
+            background-color: #1b94ff;
+            padding: 10px 16px;
+            color: #fff;
+            font-size: 16px;
+            border-radius: 6px;
+        }
+        #scr-2 .scr-container {
+            display: flex;
+        }
+        #scr-2 .scr-container #list-user{
+            flex: 3;
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+            border-right: 1px #bbb solid;
+            height: 100vh;
+        }
+        #scr-2 .scr-container #list-user li{
+            line-height: 32px;
+            padding: 0 10px;
+        }
+        #scr-2 .scr-container #list-user li.new-msg{
+            font-weight: 700;
+        }
+        #scr-2 .scr-container #list-user li.selected{
+            background-color: #bbb;
+        }
+        #scr-2 .scr-container #chat-area{
+            flex: 9;
+        }
+        #scr-2 .scr-container #message-area{
+            height: calc(100vh - 32px);
+        }
+        #scr-2 .scr-container .message-container {
+            padding: 10px;
+        }
+        #scr-2 .scr-container .message-container > * {
+            margin: 2px 0;
+            clear: both;
+            padding: 5px 10px;
+        }
+        #scr-2 .scr-container .message-container .my-msg {
+            float: right;
+            background-color: #3291e4;
+            color: #fff;
+        }
+        #scr-2 .scr-container .message-container .your-msg {
+            float: left;
+            background-color: #cecece;
+            color: #000;
+        }
+        #scr-2 .scr-container #toolbox{
+            display: flex;
+            height: 32px;
+        }
+        #scr-2 .scr-container #toolbox input{
+            flex: 1;
+        }
+        #scr-2 .scr-container #chat-area .message-container{
+            display: none;
+        }
+        #scr-2 .scr-container #chat-area .message-container.selected{
+            display: block;
+        }
+    </style>
+</body>
+</html>
